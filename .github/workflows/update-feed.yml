@@ -1,0 +1,49 @@
+name: Update Global Groove feed
+
+on:
+  # Daily retry catches episodes that SALTO publishes after the broadcast night.
+  schedule:
+    - cron: '37 23 * * *'
+      timezone: Europe/Amsterdam
+  workflow_dispatch:
+  # Runs once when this updater changes, so a deployment can be checked in Actions.
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/update-feed.yml
+      - scripts/update_feed.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: globalgroove-feed-main
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test feed update safeguards
+        run: python -m unittest discover -s tests -v
+      - name: Check SALTO and validate feed
+        run: python scripts/update_feed.py
+      - name: Commit, push, and verify new episode
+        shell: bash
+        run: |
+          if git diff --quiet -- globalgroove.xml; then
+            echo "Feed already current; nothing to commit."
+            exit 0
+          fi
+          git config user.name "J Daw Media"
+          git config user.email "info@jdawmedia.com"
+          git add -- globalgroove.xml
+          git commit -m "Add Global Groove episode $(python -c 'import xml.etree.ElementTree as E; print(E.parse("globalgroove.xml").getroot().find("channel/item/guid").text.split("-")[-1])')"
+          git push origin HEAD:main
+          python scripts/update_feed.py --verify-remote
